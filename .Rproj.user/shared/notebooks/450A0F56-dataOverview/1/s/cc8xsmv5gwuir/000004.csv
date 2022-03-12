@@ -1,0 +1,5 @@
+"0",""
+"0","corr_var(data_sc, # name of dataset"
+"0","         class_1, # name of variable to focus on"
+"0","         top=40"
+"0",")"

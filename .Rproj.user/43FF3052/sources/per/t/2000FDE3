@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1647112483029.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "144661122",
+    "id" : "2000FDE3",
+    "lastKnownWriteTime" : 1647108453,
+    "last_content_update" : 1647108453,
+    "path" : "~/Documents/GitHub/BankruptcyProject/R/ImportData.R",
+    "project_path" : "R/ImportData.R",
+    "properties" : {
+        "cursorPosition" : "55,44",
+        "scrollLine" : "44"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 5,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

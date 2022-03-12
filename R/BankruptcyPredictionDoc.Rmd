@@ -1,0 +1,1177 @@
+---
+title: "Bankruptcy Prediction"
+author: "Jakub Augustynek"
+date: "6/3/2021"
+output: html_document
+---
+
+### Wczytywanie potrzebnych bibliotek
+```{r biblioteki, message=FALSE, warning=FALSE}
+library(readr)
+library(psych)
+library(naniar)
+library(corrplot)
+library(e1071)
+library(polycor)
+library(psych)
+library(lares)
+library(ggcorrplot)
+library(car)
+library(tidyverse)
+library(MASS)
+library(klaR)
+library(caret)
+library(MASS)
+library(FactoMineR)
+library(factoextra)
+library(missMDA)
+library(ROSE)  
+library(rpart)
+library(randomForest)
+library(gbm)
+library(purrr)
+library(tibble)
+library(dplyr)
+library(DMwR2)
+library(nnet)
+library(kableExtra)
+library(flextable)
+library(rmarkdown)
+library(knitr)
+library(ROSE)
+```
+
+
+### Funkcje używane w preprocessingu i do  wyników jakości predykcji
+```{r funkcje, message=FALSE, warning=FALSE}
+###Funkcje 
+
+## usuwanie wierszów i kolumn z dużą ilością braków danych
+usunNAWiersz<-function(data)
+{
+  data$sumaNA<-0
+  for(i in 1:nrow(data))
+  {
+    data$sumaNA[i]<-sum(is.na(data[i,]))
+  }
+  
+  data<-data[which(data$sumaNA<5),]
+  return(data[,-(ncol(data))])
+}
+
+usunNAKol<-function(data)
+{
+  data[nrow(data)+1,]<-0
+  for(i in 1:ncol(data))
+  {
+    data[nrow(data),i]<-sum(is.na(data[,i]))
+  }
+  
+  data<-data[,which(data[nrow(data),]<70)]
+  return(data[-nrow(data),])
+}
+
+## usuwanie obserwacji odstających oparte o wsp. asymetrii
+outlieryKwantyl<-function(x)
+{
+  x<-as.data.frame(x)
+  for(i in 1:(ncol(x)-1))
+  {
+    coefAsy<-moment(as.double(x[,i]), order=3, center=TRUE, na.rm = TRUE)/((sd(x[,i], na.rm = TRUE))^3)
+    
+    
+    if(coefAsy>1)
+    {
+      outliersIndex<-which((x[,i])>quantile(x[,i], .99, na.rm = TRUE))
+      if(length(outliersIndex)>0)
+      {
+        x<-x[-outliersIndex,] 
+      }
+    }
+    
+    if(coefAsy<(-1))
+    {
+      outliersIndex<-which((x[,i])<quantile(x[,i], .01, na.rm = TRUE))
+      if(length(outliersIndex)>0)
+      {
+        x<-x[-outliersIndex,] 
+      }
+    }
+    if(coefAsy>-1&&coefAsy<1)
+    {
+      outliersIndex<-which((x[,i])>quantile(x[,i], .995, na.rm = TRUE))&&which((x[,i])<quantile(x[,i], .005, na.rm = TRUE))
+      if(length(outliersIndex)>0)
+      {
+        x<-x[-outliersIndex,] 
+      }
+    }
+    
+  }
+  x<-as.data.frame(x)
+  return(x)
+}
+
+
+wz<-function(x)
+{
+  sd(x, na.rm = T)/mean(x, na.rm = T)
+}
+
+## preprocessing danych: usunięcie braków, skalowanie, zastąpienie braków, zmiana typu zmiennej objaśnianej 
+dataYear <- function(x)
+{
+  x$sumaBrak <- 0
+  for(i in 1:nrow(x))
+  {
+    x$sumaBrak[i] <- sum(is.na(x[i,]))
+  }
+  x <- usunNAKol(x)
+  x <- usunNAWiersz(x)
+  
+  class <- x$class
+  x <- x[,-(ncol(x)-1)]
+  x$class <- class
+  
+  dane_sc <- c()
+  dane_sc <- scale(x)
+  dane_sc <- as.data.frame(dane_sc)
+  dane_sc$class <- as.factor(x$class)
+  
+  knnOutput <- knnImputation(x, scale = TRUE)
+  knnOutput  <-  knnImputation(dane_sc[,1:(ncol(dane_sc)-2)]) 
+  knnOutput$sumaBrak <- dane_sc$sumaBrak
+  knnOutput$class <- dane_sc$class
+  #X1year_n <-  outlieryKwantyl(knnOutput)
+  
+  wsp.zm <- sapply(knnOutput[,1:(ncol(knnOutput)-1)],wz)
+  wsp.zm <- round(wsp.zm, 2)
+  
+  X1year_n2 <- knnOutput[,abs(wsp.zm)>0.2]
+  X1year_n2$class <- ifelse(X1year_n2$class==0,"a0.Wyplacalny", "a1.Bankrut")
+  X1year_n2$class <- as.factor(X1year_n2$class)
+  
+  korelacja <- cor(X1year_n2[,1:(ncol(X1year_n2)-1)])
+  
+  highCorr  <-  findCorrelation(korelacja, cutoff = .9)
+  X1year_n2 <- X1year_n2[, -highCorr]
+  
+  return(X1year_n2)
+}
+
+
+recallBankrut<-function(x, what)
+{
+  if(ncol(x)==1)
+  {
+    return(c(1,1))
+  }
+  else
+  {
+    precis=x[2,2]/(x[2,2]+x[1,2])
+    recal=x[2,2]/(x[2,2]+x[2,1])
+    accura=(x[1,1]+x[2,2])/(sum(x[1:2, 1:2]))
+    if(!missing(what))
+    {
+      
+      if(what=="p")
+      {
+        return(precis)
+      }
+      if(what=="r")
+      {
+        return(recal)
+      } 
+    }
+    else
+    {
+      return(c(precis, recal, accura))
+    }
+  }
+  
+}
+
+```
+
+## Wczytywanie danych i preprocessing
+
+Wczytywanie danych - zbiór danych odnośnie polskich przedsiębiorstw z pierwszego roku. <br>
+
+- Dla tych danych dodano nową zmienną z ilością braków danych dla danego przedsiębiorstwa, gdyż odkryto, że przedsiębiorstwa które w przyszlości stają się bankrutami, często nie ujawniają jakichś informacjii w swoich sprawozdaniach finansowych. <br>
+- Następnie usunięto wiersze i kolumny z dużą ilością braków. <br> 
+- Dane zeskalowano. <br>
+- Braki danych usunięto za pomocą metody K-najbliższych sąsiadów. <br>
+- Usunięto dane o współczynniku zmienności mniejszym niż 0,2. 
+- Zmienną class informującą o bankructwie ustawiono jako typ factor, a jej wartości: 0 i 1 zastąpiono odpowienio "ao.Wyplacalny" i "a1.Bankrut"
+
+```{r dane, message = FALSE, warning=FALSE, include=FALSE}
+X1year <- read_csv("../dane/1year.csv", col_types = cols(Attr1 = col_double(), Attr2 = col_double(),
+                                                      Attr3 = col_double(), Attr4 = col_double(),
+                                                      Attr5 = col_double(), Attr6 = col_double(),
+                                                      Attr7 = col_double(), Attr8 = col_double(),
+                                                      Attr9 = col_double(), Attr10 = col_double(),
+                                                      Attr11 = col_double(), Attr12 = col_double(),
+                                                      Attr13 = col_double(), Attr14 = col_double(),
+                                                      Attr15 = col_double(), Attr16 = col_double(),
+                                                      Attr17 = col_double(), Attr18 = col_double(),
+                                                      Attr19 = col_double(), Attr20 = col_double(),
+                                                      Attr21 = col_double(), Attr22 = col_double(),
+                                                      Attr23 = col_double(), Attr24 = col_double(),
+                                                      Attr25 = col_double(), Attr26 = col_double(), 
+                                                      Attr27 = col_double(), Attr28 = col_double(),
+                                                      Attr29 = col_double(), Attr30 = col_double(),
+                                                      Attr31 = col_double(), Attr32 = col_double(), 
+                                                      Attr33 = col_double(), Attr34 = col_double(),
+                                                      Attr35 = col_double(), Attr36 = col_double(),
+                                                      Attr37 = col_double(), Attr38 = col_double(),
+                                                      Attr39 = col_double(), Attr40 = col_double(), 
+                                                      Attr41 = col_double(), Attr42 = col_double(),
+                                                      Attr43 = col_double(), Attr44 = col_double(),
+                                                      Attr45 = col_double(), Attr46 = col_double(), 
+                                                      Attr47 = col_double(), Attr48 = col_double(),
+                                                      Attr49 = col_double(), Attr50 = col_double(),
+                                                      Attr51 = col_double(), Attr52 = col_double(),
+                                                      Attr53 = col_double(), Attr54 = col_double(),
+                                                      Attr55 = col_double(), Attr56 = col_double(),
+                                                      Attr57 = col_double(), Attr58 = col_double(),
+                                                      Attr59 = col_double(), Attr60 = col_double(),
+                                                      Attr61 = col_double(), Attr62 = col_double(),
+                                                      Attr63 = col_double(), Attr64 = col_double(), 
+                                                      class= col_integer()))
+Xyear <- dataYear(X1year)
+#paged_table(Xyear)
+```
+
+Najpierw na danych z pierwszego roku, za pomocą każdej z metod przeprowadzono badanie osobno. <br>
+Następnie wykonano je automatycznie dla danych z różnych lat, by zwizualizować na wykresach jakość predykcji w zaleźności od tego na ile lat wcześniej przewidujemy bankructwo przedsiebiorstwa. 
+
+Pierwszą z metod, którą zastosowano jest liniowa analiza dyskryminacyjna. 
+W uczeniu modelu zastosowano cross - walidację 10 krotną. <br> 
+Ponieważ w przypadku niezbalansowanych zbiorów sama dokładność może być niewystarczająca (przy uznaniu każdego przedsiębiorstwa za wypłacne, dokładność predykcji wynosiłaby 96%) podano kilka wyników jakości predykcji:
+<ul>
+<li> dokładność, </li>
+<li> precyzję (jaką część przedsiębiorst uznanych przez klasyfikator jako bankruta są nim faktycznie), </li>
+<li> czułość (jaką część bankrutów wykrył klasyfikator), </li> 
+<li> wskaźnik F-score (F1) będący średnią harmoniczną czułości i precyzji </li>
+</ul>
+
+Wskaźniki te przyjmują wartości od 0 do 1. Wartość 1 oznacza idealną jakość predykcji. 
+
+## Liniowa Analiza Dyskryminacyjna
+
+Proces uczenia modelu i predykcji na jego podstawie powtórzono dziesięciokrotnie. Przedstawione w tabeli wyniki jakości predykcji są średnią z 10 iteracji. 
+```{r lda, message = FALSE, warning=FALSE}
+
+porownanieMetod1r2<-data.frame("Metoda"=0, "Precyzja"=0, "Czulosc"=0, "Dokladnosc"=0, "F1"=0)
+  
+
+set.seed(123) 
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+
+precis<-c()
+recal<-c()
+accura<-c()
+
+  for(i in 1:2)
+  {
+    training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+    train <- Xyear[training_sample, ]
+    test <- Xyear[!training_sample, ]
+    
+    lda1 <- caret::train(class ~., data = train, method = "lda",
+                         trControl = train.control)
+    pred1<-predict(lda1, test)
+    
+    precis[i]<-recallBankrut(table(test$class, pred1))[1]
+    recal[i]<-recallBankrut(table(test$class, pred1))[2]
+    accura[i]<-recallBankrut(table(test$class, pred1))[3]
+  }
+  
+  
+  porownanieMetod1r2[1,1]<-"Analiza dyskryminacyjna"
+  porownanieMetod1r2[1,2]<-mean(precis)
+  porownanieMetod1r2[1,3]<-mean(recal)
+  porownanieMetod1r2[1,4]<-mean(accura)
+  porownanieMetod1r2[1,5]<-2*(porownanieMetod1r2[1,2]*porownanieMetod1r2[1,3]/(porownanieMetod1r2[1,2]+porownanieMetod1r2[1,3]))
+  
+  porownanieMetod1r2[1,2:5]<-round(porownanieMetod1r2[1,2:5],4)
+  
+  porownanieMetod1r2 %>% regulartable()
+```
+
+Jak widać w tabeli, dokładność predykcji jest duża, lecz wartości czułości i precyzji są niskie. 
+
+
+## Drzewa decyzyjne
+```{r drzewa, message = FALSE, warning=FALSE}
+## drzewa decyzyjne
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  tree.rose<-train(class ~., data = train, method = "rpart",
+                   trControl = trainControl(method = "cv",
+                                            number = 10,
+                                            summaryFunction = twoClassSummary,
+                                            classProbs = TRUE), metric="ROC")
+  #tree.rose <- rpart(class ~ ., data = train)
+  
+  pred.tree.rose <- predict(tree.rose, newdata = test)
+  
+  porownanie<-data.frame("wartosc"=test$class, "tree"=pred.tree.rose)
+  #porownanie$tree<-ifelse(porownanie$tree==0,"a0.Wyplacalny", "a1.Bankrut")
+  
+  precis[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[1]
+  recal[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[2]
+  accura[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[3]
+}
+
+
+porownanieMetod1r2[2,1]<-"Drzewo decyzyjne"
+porownanieMetod1r2[2,2]<-mean(precis)
+porownanieMetod1r2[2,3]<-mean(recal)
+porownanieMetod1r2[2,4]<-mean(accura)
+porownanieMetod1r2[2,5]<-2*(porownanieMetod1r2[2,2]*porownanieMetod1r2[2,3]/(porownanieMetod1r2[2,2]+porownanieMetod1r2[2,3]))
+
+porownanieMetod1r2[2,2:5]<-round(porownanieMetod1r2[2,2:5],4)
+
+porownanieMetod1r2[2,] %>% regulartable()
+```
+
+## Las losowy
+```{r rf, message = FALSE, warning=FALSE}
+##randomForest
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  rf <- randomForest(class ~ ., data = train)
+  pred_rf = predict(rf, newdata=test)
+  wynik_rf <- data.frame("class"=test$class, "prognoza"=pred_rf)
+  
+  precis[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[1]
+  recal[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[2]
+  accura[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[3]
+}
+
+porownanieMetod1r2[3,1]<-"Random forest"
+porownanieMetod1r2[3,2]<-mean(precis, na.rm = TRUE)
+porownanieMetod1r2[3,3]<-mean(recal, na.rm = TRUE)
+porownanieMetod1r2[3,4]<-mean(accura, na.rm = TRUE)
+porownanieMetod1r2[3,5]<-2*(porownanieMetod1r2[3,2]*porownanieMetod1r2[3,3]/(porownanieMetod1r2[3,2]+porownanieMetod1r2[3,3]))
+
+porownanieMetod1r2[3,2:5]<-round(porownanieMetod1r2[3,2:5],4)
+
+porownanieMetod1r2[3,] %>% regulartable()
+
+```
+
+## Klasyfikator Naiwny Bayesa
+```{r nb, message = FALSE, warning=FALSE}
+#### NAIVE BAYES
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  nb = train(class ~ .,
+             data=train, 'nb',trControl=trainControl(method='cv',number=10))
+  
+  pred_nb = predict(nb, newdata=test)
+  wynik_nb <- data.frame(class = test$class, pred = pred_nb)
+  
+  precis[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[1]
+  recal[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[2]
+  accura[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[3]
+}
+
+porownanieMetod1r2[4,1]<-"Naive Bayes"
+porownanieMetod1r2[4,2]<-mean(precis)
+porownanieMetod1r2[4,3]<-mean(recal)
+porownanieMetod1r2[4,4]<-mean(accura)
+porownanieMetod1r2[4,5]<-2*(porownanieMetod1r2[4,2]*porownanieMetod1r2[4,3]/(porownanieMetod1r2[4,2]+porownanieMetod1r2[4,3]))
+
+porownanieMetod1r2[4,2:5]<-round(porownanieMetod1r2[4,2:5],4)
+
+porownanieMetod1r2[4,] %>% regulartable()
+
+```
+
+## Sieci Neuronowe MLP
+```{r mlp, message = FALSE, warning=FALSE}
+### sieci mlp
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  siec<-nnet(class~., data=train, size=3, decay=0.1, maxit=1000, metric="ROC")
+  
+  pred1<-predict(siec, test)
+  pred1<-round(pred1)
+  
+  pred1<-ifelse(pred1==0,"a0.Wyplacalny", "a1.Bankrut")
+  
+  precis[i]<-recallBankrut(table(test$class, pred1))[1]
+  recal[i]<-recallBankrut(table(test$class, pred1))[2]
+  accura[i]<-recallBankrut(table(test$class, pred1))[3]
+}
+
+
+porownanieMetod1r2[5,1]<-"Sieci MLP"
+porownanieMetod1r2[5,2]<-mean(precis)
+porownanieMetod1r2[5,3]<-mean(recal)
+porownanieMetod1r2[5,4]<-mean(accura)
+porownanieMetod1r2[5,5]<-2*(porownanieMetod1r2[5,2]*porownanieMetod1r2[5,3]/(porownanieMetod1r2[5,2]+porownanieMetod1r2[5,3]))
+
+porownanieMetod1r2[5,2:5]<-round(porownanieMetod1r2[5,2:5],4)
+
+porownanieMetod1r2[5,] %>% regulartable()
+```
+
+
+## Gradient Boosting Machine
+```{r gbm, message = FALSE, warning=FALSE}
+#### GBM
+precis<-c()
+recal<-c()
+accura<-c()
+ctrl <- trainControl(method = "cv",
+                     number = 10,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  orig_fit <- train(class ~ .,
+                    data = train,
+                    method = "gbm",
+                    verbose = FALSE,
+                    trControl = ctrl, metric="ROC")
+  
+  pred_nb = predict(orig_fit, test)
+  wynik_nb <- data.frame(class = test$class, pred = pred_nb)
+  
+  precis[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[1]
+  recal[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[2]
+  accura[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[3]
+}
+
+porownanieMetod1r2[6,1]<-"GBM"
+porownanieMetod1r2[6,2]<-mean(precis)
+porownanieMetod1r2[6,3]<-mean(recal)
+porownanieMetod1r2[6,4]<-mean(accura)
+porownanieMetod1r2[6,5]<-2*(porownanieMetod1r2[6,2]*porownanieMetod1r2[6,3]/(porownanieMetod1r2[6,2]+porownanieMetod1r2[6,3]))
+
+porownanieMetod1r2[6,2:5]<-round(porownanieMetod1r2[6,2:5],4)
+
+porownanieMetod1r2[6,] %>% regulartable()
+
+```
+Klasyfikacja z użyciem metody GBM dała najlepsze wyniki predykcji. 
+
+
+## Sposoby radzenia sobie ze słabymi wartościami czułości i precyzji
+
+W zbiorach danych niezbalansowanych, gdzie wielkości klas są mocno zróźnicowane, ilości obserwacji z jednej z klas znacząco przewyższa drugą, stosuje się metody takie jak: 
+<ul>
+<li> under sample - usunięcie ze zbioru danych obserwacji z klasy liczniejszej, by ilość obserwacji w obu klasach była podobna </li>
+<li> over sample - generowanie kopii obserwacji z grupy będącej mniiejszością, tak by ilość obserwacji w każdej z grup była podobna </li>
+<li> modele klasyfikacyjne z wagami - przyporządkowujemy obserwacją wagi sumujące się do jedynki, tak by obserwacje z grupy mniejszościowej miały większą wagę od większościowych. </li>
+</ul>
+
+## Under sample
+Poniżej przedstawione są wyniki jakości predykcji dla klasyfikatorów z zastosowaną metodą under sample. <br>
+Liczba obserwacji w zbiorze treningowym równa jest dwókrotności obserwacji należącej do grupy mniejszościowej. 
+```{r ldaU, echo=FALSE, warning=FALSE, message=FALSE}
+library(ROSE)
+porownanieMetod1r2<-data.frame("Metoda"=0, "Precyzja"=0, "Czulosc"=0, "Dokladnosc"=0, "F1"=0)
+
+set.seed(123) 
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+
+precis<-c()
+recal<-c()
+accura<-c()
+ile=3
+
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_under <- ROSE::ovun.sample(class ~ ., data = train, method = "under",
+                                     N=as.numeric(2*table(train$class)[2]))$data
+  
+  train<-data_balanced_under
+  
+  lda1 <- caret::train(class ~., data = train, method = "lda",
+                       trControl = train.control)
+  pred1<-predict(lda1, test)
+  
+  precis[i]<-recallBankrut(table(test$class, pred1))[1]
+  recal[i]<-recallBankrut(table(test$class, pred1))[2]
+  accura[i]<-recallBankrut(table(test$class, pred1))[3]
+}
+
+
+porownanieMetod1r2[1,1]<-"Analiza dyskryminacyjna"
+porownanieMetod1r2[1,2]<-mean(precis)
+porownanieMetod1r2[1,3]<-mean(recal)
+porownanieMetod1r2[1,4]<-mean(accura)
+porownanieMetod1r2[1,5]<-2*(porownanieMetod1r2[1,2]*porownanieMetod1r2[1,3]/(porownanieMetod1r2[1,2]+porownanieMetod1r2[1,3]))
+
+
+## drzewa decyzyjne
+
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_under <- ovun.sample(class ~ ., data = train, method = "under", N=as.numeric(2*table(train$class)[2]))$data
+  
+  train<-data_balanced_under
+  
+  tree.rose<-train(class ~., data = train, method = "rpart",
+                   trControl = trainControl(method = "cv",
+                                            number = 10,
+                                            summaryFunction = twoClassSummary,
+                                            classProbs = TRUE))
+  
+  pred.tree.rose <- predict(tree.rose, newdata = test)
+  
+  porownanie<-data.frame("wartosc"=test$class, "tree"=pred.tree.rose)
+  
+  precis[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[1]
+  recal[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[2]
+  accura[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[3]
+}
+
+
+porownanieMetod1r2[2,1]<-"Drzewo decyzyjne"
+porownanieMetod1r2[2,2]<-mean(precis)
+porownanieMetod1r2[2,3]<-mean(recal)
+porownanieMetod1r2[2,4]<-mean(accura)
+porownanieMetod1r2[2,5]<-2 * (porownanieMetod1r2[2,2]*porownanieMetod1r2[2,3]/(porownanieMetod1r2[2,2]+porownanieMetod1r2[2,3]))
+
+
+##randomForest
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_under <- ovun.sample(class ~ ., data = train, method = "under", N=as.numeric(2*table(train$class)[2]))$data
+  
+  train<-data_balanced_under
+  
+  rf <- randomForest(class ~ ., data = train)
+  pred_rf = predict(rf, newdata=test)
+  wynik_rf <- data.frame("class"=test$class, "prognoza"=pred_rf)
+  
+  precis[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[1]
+  recal[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[2]
+  accura[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[3]
+  
+}
+
+porownanieMetod1r2[3,1]<-"Random forest"
+porownanieMetod1r2[3,2]<-mean(precis, na.rm = TRUE)
+porownanieMetod1r2[3,3]<-mean(recal, na.rm = TRUE)
+porownanieMetod1r2[3,4]<-mean(accura, na.rm = TRUE)
+porownanieMetod1r2[3,5]<-2 * (porownanieMetod1r2[3,2]*porownanieMetod1r2[3,3]/(porownanieMetod1r2[3,2]+porownanieMetod1r2[3,3]))
+
+
+#### NAIVE BAYES
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_under <- ovun.sample(class ~ ., data = train, method = "under", N=as.numeric(2*table(train$class)[2]))$data
+  
+  train<-data_balanced_under
+  
+  nb = train(class ~ .,
+             data=train, 'nb',trControl=trainControl(method='cv',number=10))
+  
+  pred_nb = predict(nb, newdata=test)
+  wynik_nb <- data.frame(class = test$class, pred = pred_nb)
+  
+  precis[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[1]
+  recal[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[2]
+  accura[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[3]
+}
+
+porownanieMetod1r2[4,1]<-"Naive Bayes"
+porownanieMetod1r2[4,2]<-mean(precis)
+porownanieMetod1r2[4,3]<-mean(recal)
+porownanieMetod1r2[4,4]<-mean(accura)
+porownanieMetod1r2[4,5]<-2 * (porownanieMetod1r2[4,2]*porownanieMetod1r2[4,3]/(porownanieMetod1r2[4,2]+porownanieMetod1r2[4,3]))
+
+### sieci mlp
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_under <- ovun.sample(class ~ ., data = train, method = "under", N=as.numeric(2*table(train$class)[2]))$data
+  
+  train<-data_balanced_under
+  
+  siec<-nnet(class~., data=train, size=3, decay=0.1, maxit=1000, metric="ROC")
+  
+  pred1<-predict(siec, test)
+  pred1<-round(pred1)
+  
+  pred1<-ifelse(pred1==0,"a0.Wyplacalny", "a1.Bankrut")
+  
+  precis[i]<-recallBankrut(table(test$class, pred1))[1]
+  recal[i]<-recallBankrut(table(test$class, pred1))[2]
+  accura[i]<-recallBankrut(table(test$class, pred1))[3]
+
+}
+
+
+porownanieMetod1r2[5,1]<-"Sieci MLP"
+porownanieMetod1r2[5,2]<-mean(precis)
+porownanieMetod1r2[5,3]<-mean(recal)
+porownanieMetod1r2[5,4]<-mean(accura)
+porownanieMetod1r2[5,5]<-2 * (porownanieMetod1r2[5,2]*porownanieMetod1r2[5,3]/(porownanieMetod1r2[5,2]+porownanieMetod1r2[5,3]))
+
+
+
+#### GBM
+precis<-c()
+recal<-c()
+accura<-c()
+ctrl <- trainControl(method = "cv",
+                     number = 10,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_under <- ovun.sample(class ~ ., data = train, method = "under", N=as.numeric(2*table(train$class)[2]))$data
+  
+  train<-data_balanced_under
+  
+  orig_fit <- train(class ~ .,
+                    data = train,
+                    method = "gbm",
+                    verbose = FALSE,
+                    trControl = ctrl, metric="ROC")
+  
+  pred_nb = predict(orig_fit, test)
+  wynik_nb <- data.frame(class = test$class, pred = pred_nb)
+  
+  precis[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[1]
+  recal[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[2]
+  accura[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[3]
+}
+
+porownanieMetod1r2[6,1]<-"GBM"
+porownanieMetod1r2[6,2]<-mean(precis)
+porownanieMetod1r2[6,3]<-mean(recal)
+porownanieMetod1r2[6,4]<-mean(accura)
+porownanieMetod1r2[6,5]<-2 * (porownanieMetod1r2[6,2]*porownanieMetod1r2[6,3]/(porownanieMetod1r2[6,2]+porownanieMetod1r2[6,3]))
+
+porownanieMetod1r2[,2:5]<-round(porownanieMetod1r2[,2:5],4)
+
+porownanieMetod1r2 %>% regulartable()
+```
+W wyniku uczenia modelu na mniejszym zbiorze danych, dokładność predykcji spadła do średnio 70%. <br> Istotnie zwiększyła się jednak czułość do ponad *70%* i ta miara może być *szczególnie ważna*, ponieważ pokazuje jak trafnie przewiduje się, że firma zbankrutuje. Dla np. inwestora, który korzysta z takiej analizy, ważniejsza będzie informacja, w którą firme nie inwestować, bo może ona w przyszłosci zbankrutować, skutkiem czego może być utrata zainwestowanych pieniędzy.
+
+## Porównanie jakości predykcji dla danych z 5 lat
+Na porównaniu jakości predykcji zauważyć można, że dokładność predykcji spadła w porównaniu do modelu na danych wyjściowych, lecz nadal jest na wysokim poziomie. <br>
+Wraz ze zmniejszaniem się horyzontu czasowego prognozy, zwiększa się jakość predykcji, dla roku 5, gdzie przewiduje się bankructwo w przeciągu następnego roku, dokładność, precyzja jest znacznie większa niż dla roku pierwszego, gdzie przewidujemy bankructwo w przeciągu 5 lat. <br>
+
+Metodą, która wyróżnia się najlepszymi wartościami jakości jest GBM, bardzo dobre wartości osiąga także analiza dyskryminacyjna. <br>
+Klasyfikator Naiwny Bayesa cechuje się najgorszymi miarami jakości, lecz polepsza się wraz ze zmnijeszaniem horyzontu czasowego prognozy.
+
+
+### Over sample
+
+Liczba obserwacji w zbiorze treningowym równa jest dwókrotności obserwacji należącej do grupy większościowej.
+```{r oversample, message=FALSE, warning=FALSE}
+
+porownanieMetod1r2<-data.frame("Metoda"=0, "Precyzja"=0, "Czulosc"=0, "Dokladnosc"=0, "F1"=0)
+
+set.seed(123) 
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+
+precis<-c()
+recal<-c()
+accura<-c()
+
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_over <- ovun.sample(class ~ ., data = train, method = "over",N = as.numeric(2*table(train$class)[1]))$data
+  
+  train<-data_balanced_over
+  
+  lda1 <- caret::train(class ~., data = train, method = "lda",
+                       trControl = train.control)
+  pred1<-predict(lda1, test)
+  
+  precis[i]<-recallBankrut(table(test$class, pred1))[1]
+  recal[i]<-recallBankrut(table(test$class, pred1))[2]
+  accura[i]<-recallBankrut(table(test$class, pred1))[3]
+}
+
+
+porownanieMetod1r2[1,1]<-"Analiza dyskryminacyjna"
+porownanieMetod1r2[1,2]<-mean(precis)
+porownanieMetod1r2[1,3]<-mean(recal)
+porownanieMetod1r2[1,4]<-mean(accura)
+porownanieMetod1r2[1,5]<-2 * (porownanieMetod1r2[1,2]*porownanieMetod1r2[1,3]/(porownanieMetod1r2[1,2]+porownanieMetod1r2[1,3]))
+
+
+## drzewa decyzyjne
+
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_over <- ovun.sample(class ~ ., data = train, method = "over",N = as.numeric(2*table(train$class)[1]))$data
+  
+  train<-data_balanced_over
+  
+  tree.rose<-train(class ~., data = train, method = "rpart",
+                   trControl = trainControl(method = "cv",
+                                            number = 10,
+                                            summaryFunction = twoClassSummary,
+                                            classProbs = TRUE), metric="ROC")
+  #tree.rose <- rpart(class ~ ., data = train)
+  
+  pred.tree.rose <- predict(tree.rose, newdata = test)
+  
+  porownanie<-data.frame("wartosc"=test$class, "tree"=pred.tree.rose)
+  
+  precis[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[1]
+  recal[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[2]
+  accura[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[3]
+}
+
+
+porownanieMetod1r2[2,1]<-"Drzewo decyzyjne"
+porownanieMetod1r2[2,2]<-mean(precis)
+porownanieMetod1r2[2,3]<-mean(recal)
+porownanieMetod1r2[2,4]<-mean(accura)
+porownanieMetod1r2[2,5]<-2 * (porownanieMetod1r2[2,2]*porownanieMetod1r2[2,3]/(porownanieMetod1r2[2,2]+porownanieMetod1r2[2,3]))
+
+
+##randomForest
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_over <- ovun.sample(class ~ ., data = train, method = "over",N = as.numeric(2*table(train$class)[1]))$data
+  
+  train<-data_balanced_over
+  
+  rf <- randomForest(class ~ ., data = train)
+  pred_rf = predict(rf, newdata=test)
+  wynik_rf <- data.frame("class"=test$class, "prognoza"=pred_rf)
+  
+  precis[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[1]
+  recal[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[2]
+  accura[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[3]
+
+}
+
+porownanieMetod1r2[3,1]<-"Random forest"
+porownanieMetod1r2[3,2]<-mean(precis, na.rm = TRUE)
+porownanieMetod1r2[3,3]<-mean(recal, na.rm = TRUE)
+porownanieMetod1r2[3,4]<-mean(accura, na.rm = TRUE)
+porownanieMetod1r2[3,5]<-2 * (porownanieMetod1r2[3,2]*porownanieMetod1r2[3,3]/(porownanieMetod1r2[3,2]+porownanieMetod1r2[3,3]))
+
+
+#### NAIVE BAYES
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_over <- ovun.sample(class ~ ., data = train, method = "over",N = as.numeric(2*table(train$class)[1]))$data
+  
+  train<-data_balanced_over
+  
+  nb = train(class ~ .,
+             data=train, 'nb',trControl=trainControl(method='cv',number=10))
+  
+  pred_nb = predict(nb, newdata=test)
+  wynik_nb <- data.frame(class = test$class, pred = pred_nb)
+  
+  precis[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[1]
+  recal[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[2]
+  accura[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[3]
+}
+
+porownanieMetod1r2[4,1]<-"Naive Bayes"
+porownanieMetod1r2[4,2]<-mean(precis)
+porownanieMetod1r2[4,3]<-mean(recal)
+porownanieMetod1r2[4,4]<-mean(accura)
+porownanieMetod1r2[4,5]<-2 * (porownanieMetod1r2[4,2]*porownanieMetod1r2[4,3]/(porownanieMetod1r2[4,2]+porownanieMetod1r2[4,3]))
+
+### sieci mlp
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_over <- ovun.sample(class ~ ., data = train, method = "over",N = as.numeric(2*table(train$class)[1]))$data
+  
+  train<-data_balanced_over
+  
+  siec<-nnet(class~., data=train, size=3, decay=0.1, maxit=1000, metric="ROC")
+  
+  pred1<-predict(siec, test)
+  pred1<-round(pred1)
+  
+  pred1<-ifelse(pred1==0,"a0.Wyplacalny", "a1.Bankrut")
+  
+  precis[i]<-recallBankrut(table(test$class, pred1))[1]
+  recal[i]<-recallBankrut(table(test$class, pred1))[2]
+  accura[i]<-recallBankrut(table(test$class, pred1))[3]
+
+}
+
+
+porownanieMetod1r2[5,1]<-"Sieci MLP"
+porownanieMetod1r2[5,2]<-mean(precis)
+porownanieMetod1r2[5,3]<-mean(recal)
+porownanieMetod1r2[5,4]<-mean(accura)
+porownanieMetod1r2[5,5]<-2 * (porownanieMetod1r2[5,2]*porownanieMetod1r2[5,3]/(porownanieMetod1r2[5,2]+porownanieMetod1r2[5,3]))
+
+
+
+#### GBM
+precis<-c()
+recal<-c()
+accura<-c()
+ctrl <- trainControl(method = "cv",
+                     number = 10,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+for(i in 1:2)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  data_balanced_over <- ovun.sample(class ~ ., data = train, method = "over",N = as.numeric(2*table(train$class)[1]))$data
+  
+  train<-data_balanced_over
+  
+  orig_fit <- train(class ~ .,
+                    data = train,
+                    method = "gbm",
+                    verbose = FALSE,
+                    trControl = ctrl, metric="ROC")
+  
+  pred_nb = predict(orig_fit, test)
+  wynik_nb <- data.frame(class = test$class, pred = pred_nb)
+  
+  precis[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[1]
+  recal[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[2]
+  accura[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[3]
+}
+
+porownanieMetod1r2[6,1]<-"GBM"
+porownanieMetod1r2[6,2]<-mean(precis)
+porownanieMetod1r2[6,3]<-mean(recal)
+porownanieMetod1r2[6,4]<-mean(accura)
+porownanieMetod1r2[6,5]<-2 * (porownanieMetod1r2[6,2]*porownanieMetod1r2[6,3]/(porownanieMetod1r2[6,2]+porownanieMetod1r2[6,3]))
+
+porownanieMetod1r2[,2:5]<-round(porownanieMetod1r2[,2:5],4)
+
+porownanieMetod1r2 %>% regulartable()
+```
+
+W przypadku pracy na zbiorze uczącym z większą ilością obserwacji grupy mniejszościowej, dokładność predykcji znacznie wzrosła. Polepszyły się także wartości precyzji i czułości 
+
+
+### Zastosowanie wag
+```{r modele z wagami, message=FALSE, warning=FALSE}
+porownanieMetod1r2<-data.frame("Metoda"=0, "Precyzja"=0, "Czulosc"=0, "Dokladnosc"=0, "F1"=0)
+
+set.seed(123) 
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+
+precis<-c()
+recal<-c()
+accura<-c()
+
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  model_weights <- ifelse(train$class == "a0.Wyplacalny",
+                          (1/table(train$class)[1]) * 0.5,
+                          (1/table(train$class)[2]) * 0.5)
+  
+  lda1 <- caret::train(class ~., data = train, method = "lda",
+                       trControl = train.control, weights = model_weights)
+  pred1<-predict(lda1, test)
+  
+  precis[i]<-recallBankrut(table(test$class, pred1))[1]
+  recal[i]<-recallBankrut(table(test$class, pred1))[2]
+  accura[i]<-recallBankrut(table(test$class, pred1))[3]
+}
+
+
+porownanieMetod1r2[1,1]<-"Analiza dyskryminacyjna"
+porownanieMetod1r2[1,2]<-mean(precis)
+porownanieMetod1r2[1,3]<-mean(recal)
+porownanieMetod1r2[1,4]<-mean(accura)
+porownanieMetod1r2[1,5]<-2 * (porownanieMetod1r2[1,2]*porownanieMetod1r2[1,3]/(porownanieMetod1r2[1,2]+porownanieMetod1r2[1,3]))
+
+
+## drzewa decyzyjne
+
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  model_weights <- ifelse(train$class == "a0.Wyplacalny",
+                          (1/table(train$class)[1]) * 0.5,
+                          (1/table(train$class)[2]) * 0.5)
+  
+  tree.rose<-train(class ~., data = train, method = "rpart",
+                   trControl = trainControl(method = "cv",
+                                            number = 10,
+                                            summaryFunction = twoClassSummary,
+                                            classProbs = TRUE), metric="ROC", weights=model_weights)
+  
+  
+  pred.tree.rose <- predict(tree.rose, newdata = test)
+  
+  porownanie<-data.frame("wartosc"=test$class, "tree"=pred.tree.rose)
+  
+  precis[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[1]
+  recal[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[2]
+  accura[i]<-recallBankrut(table(porownanie$wartosc, porownanie$tree))[3]
+}
+
+
+porownanieMetod1r2[2,1]<-"Drzewo decyzyjne"
+porownanieMetod1r2[2,2]<-mean(precis)
+porownanieMetod1r2[2,3]<-mean(recal)
+porownanieMetod1r2[2,4]<-mean(accura)
+porownanieMetod1r2[2,5]<-2 * (porownanieMetod1r2[2,2]*porownanieMetod1r2[2,3]/(porownanieMetod1r2[2,2]+porownanieMetod1r2[2,3]))
+
+
+##randomForest
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  model_weights <- c((1/table(train$class)[1]) * 0.5, (1/table(train$class)[2]) * 0.5)
+  
+  rf <- randomForest(class ~ ., data = train, classwt = model_weights)
+  pred_rf = predict(rf, newdata=test)
+  wynik_rf <- data.frame("class"=test$class, "prognoza"=pred_rf)
+  
+  precis[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[1]
+  recal[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[2]
+  accura[i]<-recallBankrut(table(wynik_rf$class, wynik_rf$prognoza))[3]
+
+}
+
+porownanieMetod1r2[3,1]<-"Random forest"
+porownanieMetod1r2[3,2]<-mean(precis, na.rm = TRUE)
+porownanieMetod1r2[3,3]<-mean(recal, na.rm = TRUE)
+porownanieMetod1r2[3,4]<-mean(accura, na.rm = TRUE)
+porownanieMetod1r2[3,5]<-2 * (porownanieMetod1r2[3,2]*porownanieMetod1r2[3,3]/(porownanieMetod1r2[3,2]+porownanieMetod1r2[3,3]))
+
+
+#### NAIVE BAYES
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  model_weights <- ifelse(train$class == "a0.Wyplacalny",
+                          (1/table(train$class)[1]) * 0.5,
+                          (1/table(train$class)[2]) * 0.5)
+  
+  nb = train(class ~ .,
+             data=train, 'nb',trControl=trainControl(method='cv',number=10), weights = model_weights)
+  
+  
+  pred_nb = predict(nb, newdata=test)
+  wynik_nb <- data.frame(class = test$class, pred = pred_nb)
+  
+  precis[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[1]
+  recal[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[2]
+  accura[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[3]
+}
+
+porownanieMetod1r2[4,1]<-"Naive Bayes"
+porownanieMetod1r2[4,2]<-mean(precis)
+porownanieMetod1r2[4,3]<-mean(recal)
+porownanieMetod1r2[4,4]<-mean(accura)
+porownanieMetod1r2[4,5]<-2 * (porownanieMetod1r2[4,2]*porownanieMetod1r2[4,3]/(porownanieMetod1r2[4,2]+porownanieMetod1r2[4,3]))
+
+### sieci mlp
+precis<-c()
+recal<-c()
+accura<-c()
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  model_weights <- ifelse(train$class == "a0.Wyplacalny",
+                          (1/table(train$class)[1]) * 0.5,
+                          (1/table(train$class)[2]) * 0.5)
+  
+  siec<-nnet(class~., data=train, size=3, decay=0.1, maxit=1000, metric="ROC", weights = model_weights)
+  
+  pred1<-predict(siec, test)
+  pred1<-round(pred1)
+  
+  pred1<-ifelse(pred1==0,"a0.Wyplacalny", "a1.Bankrut")
+  
+  precis[i]<-recallBankrut(table(test$class, pred1))[1]
+  recal[i]<-recallBankrut(table(test$class, pred1))[2]
+  accura[i]<-recallBankrut(table(test$class, pred1))[3]
+
+}
+
+
+porownanieMetod1r2[5,1]<-"Sieci MLP"
+porownanieMetod1r2[5,2]<-mean(precis)
+porownanieMetod1r2[5,3]<-mean(recal)
+porownanieMetod1r2[5,4]<-mean(accura)
+porownanieMetod1r2[5,5]<-2 * (porownanieMetod1r2[5,2]*porownanieMetod1r2[5,3]/(porownanieMetod1r2[5,2]+porownanieMetod1r2[5,3]))
+
+
+
+#### GBM
+precis<-c()
+recal<-c()
+accura<-c()
+ctrl <- trainControl(method = "cv",
+                     number = 10,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+for(i in 1:ile)
+{
+  training_sample <- sample(c(TRUE, FALSE), nrow(Xyear), replace = T, prob = c(0.7,0.3))
+  train <- Xyear[training_sample, ]
+  test <- Xyear[!training_sample, ]
+  
+  model_weights <- ifelse(train$class == "a0.Wyplacalny",
+                          (1/table(train$class)[1]) * 0.5,
+                          (1/table(train$class)[2]) * 0.5)
+  
+  orig_fit <- train(class ~ .,
+                    data = train,
+                    method = "gbm",
+                    verbose = FALSE,
+                    weights = model_weights,
+                    trControl = ctrl, metric="ROC")
+  
+  pred_nb = predict(orig_fit, test)
+  wynik_nb <- data.frame(class = test$class, pred = pred_nb)
+  
+  precis[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[1]
+  recal[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[2]
+  accura[i]<-recallBankrut(table(wynik_nb$class, wynik_nb$pred))[3]
+}
+
+porownanieMetod1r2[6,1]<-"GBM"
+porownanieMetod1r2[6,2]<-mean(precis)
+porownanieMetod1r2[6,3]<-mean(recal)
+porownanieMetod1r2[6,4]<-mean(accura)
+porownanieMetod1r2[6,5]<-2 * (porownanieMetod1r2[6,2]*porownanieMetod1r2[6,3]/(porownanieMetod1r2[6,2]+porownanieMetod1r2[6,3]))
+
+porownanieMetod1r2[,2:5]<-round(porownanieMetod1r2[,2:5],4)
+
+porownanieMetod1r2 %>% regulartable()
+```
+
+W przypadku pracy na modelach z wykorztstaniem wag, miary jakości predykcji są lepsze Sieć neuronowa jest prawdopodobnie przeuczona, opiera się wyłącznie na wagach w klasyfikacji.

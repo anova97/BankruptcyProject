@@ -1,0 +1,4 @@
+"0","korelacjaZmienne  <- cor(X1year_n[,1:(ncol(X1year_n)-1)])"
+"0",""
+"0","library(ggcorrplot)"
+"0","ggcorrplot(korelacjaZmienne, tl.cex = ""8"")"

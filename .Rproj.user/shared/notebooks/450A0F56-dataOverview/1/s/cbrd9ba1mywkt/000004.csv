@@ -1,0 +1,3 @@
+"0",""
+"0","text(wykres, 0, table(data_sc[,ncol(data_sc)]), cex=2,pos=3) "
+"0",""

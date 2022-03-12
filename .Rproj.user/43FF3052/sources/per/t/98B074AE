@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1647113586443.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "4220108559",
+    "id" : "98B074AE",
+    "lastKnownWriteTime" : 1646845327,
+    "last_content_update" : 1647113675269,
+    "path" : "~/Documents/GitHub/BankruptcyProject/R/Functions:Libraries.R",
+    "project_path" : "R/Functions:Libraries.R",
+    "properties" : {
+        "cursorPosition" : "158,2",
+        "scrollLine" : "155"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 4,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

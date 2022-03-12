@@ -1,0 +1,6 @@
+"0","  X1year_n2$class <- ifelse(X1year_n2$class==0,""a0.Wyplacalny"", ""a1.Bankrut"")
+"
+"2","Komunikat ostrzegawczy:
+"
+"2","Unknown or uninitialised column: `sumaNA`. 
+"

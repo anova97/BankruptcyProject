@@ -1,0 +1,2 @@
+"0","korelacja2  <- cor(dataSk1_n[,1:(ncol(dataSk1_n)-1)])"
+"0","corrplot(korelacja2, tl.cex=0.5)"

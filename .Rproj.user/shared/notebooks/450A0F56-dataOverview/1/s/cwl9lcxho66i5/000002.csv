@@ -1,0 +1,3 @@
+"0","wykres  <-  barplot(table(dataSk1$class), col = c(""darkgreen"", ""red""),"
+"0","        xlab=""Bankructwo"","
+"0","        ylab=""Ilość firm"")"

@@ -1,0 +1,7 @@
+"0",""
+"0","colnames(data_sc)[1:94]  <- paste(""attr"", seq(1:94), sep = """")"
+"0","korelacjaZmienne  <- cor(data_sc[,1:(ncol(data_sc)-1)])"
+"0",""
+"0",""
+"0","library(ggcorrplot)"
+"0","ggcorrplot(korelacjaZmienne, tl.cex = ""8"")"

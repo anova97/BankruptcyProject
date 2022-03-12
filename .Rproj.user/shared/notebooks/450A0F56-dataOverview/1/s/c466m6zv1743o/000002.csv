@@ -1,0 +1,4 @@
+"0","data <- read_csv(""../dane/data.csv"")"
+"0","data$class  <- data$`Bankrupt?`"
+"0","## 1 - bankrut"
+"0","data  <- data[,2:ncol(data)]"

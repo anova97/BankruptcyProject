@@ -1,0 +1,8 @@
+"0","#skalowanie"
+"0","data_sc  <- c()"
+"0","data_sc  <- scale(data)"
+"0","data_sc  <- as.data.frame(data_sc)"
+"0","data_sc$class  <- data$class"
+"0","data_sc  <- as.data.frame(data_sc)"
+"0",""
+"0","boxplot(data_sc)"

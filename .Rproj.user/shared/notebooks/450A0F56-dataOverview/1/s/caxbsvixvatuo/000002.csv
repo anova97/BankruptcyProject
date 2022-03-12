@@ -1,0 +1,6 @@
+"0","#usuwanie braków "
+"0","dataSk1  <- usunNAWiersz(dataSk1)"
+"0",""
+"0","dataSk1  <- usunNAKol(dataSk1)"
+"0",""
+"0","vis_miss(dataSk1)"

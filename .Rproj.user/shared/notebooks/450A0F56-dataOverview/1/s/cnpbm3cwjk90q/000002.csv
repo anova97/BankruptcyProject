@@ -1,0 +1,3 @@
+"0","data_sc  <- outliery(data_sc)"
+"0","data_sc$class  <- as.factor(data_sc$class)"
+"0","data_sc  <- data_sc[,c(-94)]"

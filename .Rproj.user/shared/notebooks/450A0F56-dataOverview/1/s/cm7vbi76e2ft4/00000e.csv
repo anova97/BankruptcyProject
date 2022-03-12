@@ -1,0 +1,3 @@
+"0",""
+"0","#scree plot"
+"0","fviz_eig(X1year_pca, addlabels = TRUE,choice = ""eigenvalue"")+xlab(""numer skladowej glownej"")+ylab(""wartosci wlasne"")+ggtitle(""Wykres wartosci wlasnych"")"

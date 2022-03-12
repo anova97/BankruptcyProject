@@ -1,0 +1,3 @@
+"0",""
+"0","dataSk1_n  <- zastapSredniaGrup(dataSk1_sc)"
+"0","dataSk1_n$class  <- as.factor(dataSk1_sc$class)"

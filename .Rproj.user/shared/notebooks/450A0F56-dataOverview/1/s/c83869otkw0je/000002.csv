@@ -1,0 +1,5 @@
+"0","library(kableExtra)"
+"0","library(FactoMineR)"
+"0","library(factoextra)"
+"0",""
+"0","X1year_pca <- PCA(X1year_n[,1:(ncol(X1year_n)-1)]) "

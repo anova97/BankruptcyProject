@@ -1,0 +1,6 @@
+"0","library(lares)"
+"0",""
+"0","corr_var(dataSk1_n, # name of dataset"
+"0","         class_1, # name of variable to focus on"
+"0","         top=30"
+"0",")"

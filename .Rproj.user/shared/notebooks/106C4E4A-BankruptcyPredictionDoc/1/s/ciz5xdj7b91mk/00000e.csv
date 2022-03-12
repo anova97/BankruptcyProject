@@ -1,0 +1,58 @@
+"0","  tree.rose<-train(class ~., data = train, method = ""rpart"",
+                   trControl = trainControl(method = ""cv"",
+                                            number = 10,
+                                            summaryFunction = twoClassSummary,
+                                            classProbs = TRUE))
+"
+"1","Something is wrong; all the ROC metric values are missing:
+"
+"1",""
+"1","      ROC     "
+"1","      Sens  "
+"1","      Spec  "
+"1","
+"
+"1"," Min.   : NA  "
+"1"," Min.   :0  "
+"1"," Min.   :0  "
+"1","
+"
+"1"," 1st Qu.: NA  "
+"1"," 1st Qu.:0  "
+"1"," 1st Qu.:0  "
+"1","
+"
+"1"," Median : NA  "
+"1"," Median :0  "
+"1"," Median :0  "
+"1","
+"
+"1"," Mean   :NaN  "
+"1"," Mean   :0  "
+"1"," Mean   :0  "
+"1","
+"
+"1"," 3rd Qu.: NA  "
+"1"," 3rd Qu.:0  "
+"1"," 3rd Qu.:0  "
+"1","
+"
+"1"," Max.   : NA  "
+"1"," Max.   :0  "
+"1"," Max.   :0  "
+"1","
+"
+"1"," NA's   :1    "
+"1","            "
+"1","            "
+"1","
+"
+"2","BŁĄD: Stopping
+"
+"2","Dodatkowo: "
+"2","Komunikaty ostrzegawcze:
+"
+"2","1: Unknown or uninitialised column: `sumaNA`. 
+"
+"2","2: Unknown or uninitialised column: `sumaNA`. 
+"

@@ -1,0 +1,619 @@
+---
+title: "Bankruptcy Prediction"
+author: "Jakub Augustynek"
+date: "5/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Zbiór danych
+
+Zbiór danych pobrany został z serwisu Kaggle. Dane te pochodzą od: 
+
+Zieba, M., Tomczak, S. K., & Tomczak, J. M. (2016). Ensemble Boosted Trees with Synthetic Features Generation in Application to Bankruptcy Prediction. Expert Systems with Applications. 
+
+Bankrutujące firmy pochodzą z lat: 2000 - 2012
+A działające firmy z lat 2007 - 2013
+
+
+Zbiór danych składa się z 5 plików, w każdym z nich znajdują się wartości 64 wskaźników finansowych oraz zmienna binarna class informująca, czy odpowiednio dla każdego pliku po 5, 4, 3, 2 latach oraz roku dane przedsiębiorstwo ogłosiło bankructwo. Dla każdego z roku występuje od 5000 do 10 000 przedsiębiorstw.  
+
+```{r dane, message = FALSE, warning=FALSE}
+### biblioteki
+library(readr)
+library(psych)
+library(naniar)
+library(corrplot)
+library(e1071)
+library(polycor)
+
+X1year <- read_csv("../dane/1year.csv", col_types = cols(Attr1 = col_double(), Attr2 = col_double(),
+                                                      Attr3 = col_double(), Attr4 = col_double(),
+                                                      Attr5 = col_double(), Attr6 = col_double(),
+                                                      Attr7 = col_double(), Attr8 = col_double(),
+                                                      Attr9 = col_double(), Attr10 = col_double(),
+                                                      Attr11 = col_double(), Attr12 = col_double(),
+                                                      Attr13 = col_double(), Attr14 = col_double(),
+                                                      Attr15 = col_double(), Attr16 = col_double(),
+                                                      Attr17 = col_double(), Attr18 = col_double(),
+                                                      Attr19 = col_double(), Attr20 = col_double(),
+                                                      Attr21 = col_double(), Attr22 = col_double(),
+                                                      Attr23 = col_double(), Attr24 = col_double(),
+                                                      Attr25 = col_double(), Attr26 = col_double(), 
+                                                      Attr27 = col_double(), Attr28 = col_double(),
+                                                      Attr29 = col_double(), Attr30 = col_double(),
+                                                      Attr31 = col_double(), Attr32 = col_double(), 
+                                                      Attr33 = col_double(), Attr34 = col_double(),
+                                                      Attr35 = col_double(), Attr36 = col_double(),
+                                                      Attr37 = col_double(), Attr38 = col_double(),
+                                                      Attr39 = col_double(), Attr40 = col_double(), 
+                                                      Attr41 = col_double(), Attr42 = col_double(),
+                                                      Attr43 = col_double(), Attr44 = col_double(),
+                                                      Attr45 = col_double(), Attr46 = col_double(), 
+                                                      Attr47 = col_double(), Attr48 = col_double(),
+                                                      Attr49 = col_double(), Attr50 = col_double(),
+                                                      Attr51 = col_double(), Attr52 = col_double(),
+                                                      Attr53 = col_double(), Attr54 = col_double(),
+                                                      Attr55 = col_double(), Attr56 = col_double(),
+                                                      Attr57 = col_double(), Attr58 = col_double(),
+                                                      Attr59 = col_double(), Attr60 = col_double(),
+                                                      Attr61 = col_double(), Attr62 = col_double(),
+                                                      Attr63 = col_double(), Attr64 = col_double(), 
+                                                      class= col_integer()))
+
+```
+
+## Analiza zbioru danych na podstawie pliku 1year
+
+Jak widać na poniższej wizualizacji braków danych jest stosunkowo niewiele - 1,3%, jednak występują dość licznie dla poszczególnych zmiennych i wierszy, na wydruku z konsoli zobaczyć można statystyki oraz ilośći braków danych dla poszczególnych zmiennych, usunięte zostaną zmienne, w których jest ponad 70 braków danych oraz wiersze, gdzie wystpuje ponad 5 braków danych.  
+```{r braki, echo=FALSE}
+vis_miss(X1year)
+summary(X1year)
+```
+
+```{r usuwanie}
+#funkcja do usuwania, gdy NA w wierszu
+usunNAWiersz  <- function(data)
+{
+  data$sumaNA  <- 0
+  for(i in 1:nrow(data))
+  {
+    data$sumaNA[i]  <- sum(is.na(data[i,]))
+  }
+  
+  data  <- data[which(data$sumaNA<5),]
+  return(data[,-(ncol(data))])
+}
+
+
+#funkcja do usuwania, gdy NA w kolumnie
+usunNAKol  <- function(data)
+{
+  data[nrow(data)+1,]  <- 0
+  for(i in 1:ncol(data))
+  {
+    data[nrow(data),i]  <- sum(is.na(data[,i]))
+  }
+  
+  data  <- data[,which(data[nrow(data),]<70)]
+  return(data[-nrow(data),])
+}
+
+X1year  <- usunNAWiersz(X1year)
+X1year  <- usunNAKol(X1year)
+```
+
+### Po usunięciu
+
+Po usunięciu kolumn i wierszy z dużą liczbą braków danych, braków danych jest około 0,1%
+Obserwacji jest 6929,a zmiennych 58.
+
+Braki te mogłyby być jeszcze uzupełnione średnią z grupy, do której należy. 
+Patrząc na statystyki wśród zmiennych, zauważyć można, że dla niektórych atrybutów występują obserwacje znacznie odstające. 
+```{r po zmianach}
+vis_miss(X1year)
+summary(X1year)
+```
+
+#### Skalowanie danych
+Ponieważ dane są w różnych rzędach wielkości, postanowiono je zeskalować.
+
+```{r skalowanie, echo=FALSE}
+#skalowanie
+dane_sc  <- c()
+dane_sc  <- scale(X1year)
+dane_sc  <- as.data.frame(dane_sc)
+dane_sc$class  <- X1year$class
+dane_sc  <- as.data.frame(dane_sc)
+par(mar = rep(2, 4))
+
+boxplot(dane_sc)
+```
+
+### Obserwacje odstające
+
+W celu detekcji i usunięcia outlierów zastosowano procedurę opartą na kwantylach i współczynniku asymetrii, usunięcie outlierów taką metodą sprawia, że zwiększa się dokładność i wrażliwość prognozy (Problem of Outliers in Corporate BankruptcyPrediction, Barbara Pawełek, Józef Pociecha)
+.    
+```{r funkcje}
+outlieryKwantyl  <- function(x)
+{
+  x  <- as.data.frame(x)
+  for(i in 1:(ncol(x)-1))
+  {
+    
+    coefAsy  <- moment(as.double(x[,i]), order=3, center=TRUE, na.rm = TRUE)/((sd(x[,i], na.rm = TRUE))^3)
+    
+    if(is.numeric(coefAsy))
+    {
+      if(coefAsy>1)
+    {
+      outliersIndex  <- which((x[,i])>quantile(x[,i], .99, na.rm = TRUE))
+      
+      if(length(outliersIndex)>0)
+      {
+        x  <- x[-outliersIndex,] 
+      }
+    }
+    
+    if(coefAsy<(-1))
+    {
+      outliersIndex  <- which((x[,i])<quantile(x[,i], .01, na.rm = TRUE))
+      
+      if(length(outliersIndex)>0)
+      {
+        x  <- x[-outliersIndex,] 
+      }
+    }
+    if(coefAsy>-1&&coefAsy<1)
+    {
+      outliersIndex  <- which((x[,i])>quantile(x[,i], .995, na.rm = TRUE))&&which((x[,i])<quantile(x[,i], .005, na.rm = TRUE))
+      
+      if(length(outliersIndex)>0)
+      {
+        x  <- x[-outliersIndex,] 
+      }
+    }
+    }
+    
+  }
+  x  <- as.data.frame(x)
+  return(x)
+}
+
+outliery  <- function(x)
+{
+  for(i in 1:ncol(x)-1)
+  {
+    outliersIndex  <- which(abs(x[,i])-3>0)
+    if(sum(outliersIndex)!=0)
+    {
+      x  <- x[-outliersIndex,]
+    }
+  }
+  x  <- as.data.frame(x)
+  return(x)
+}
+```
+
+### dane po usunięciu outlierów
+```{r outlier, echo=FALSE}
+X1year_n  <-  outlieryKwantyl(dane_sc)
+
+summary(X1year_n)
+boxplot(X1year_n)
+
+```
+
+#### współczynniki zmienności 
+Praktycznie każda zmienna cechuje się dużą zmiennością, wyjątkiem jest Attr13, Attr20, Attr30, Attr43, Attr44, Attr49, Attr56, Attr59, Attr62. 
+```{r wz, echo=FALSE}
+wz  <- function(x)
+{
+  round(sd(x, na.rm = T)/mean(x, na.rm = T),3)
+}
+wsp.zm  <- sapply(X1year_n, wz)
+
+wsp.zm
+```
+
+
+## Zastąpienie braków średnią grupową
+Ponieważ wiele funkcji jest czułych na braki danych, postanowiono zastąpić je średnią grupową.
+Zmienną class ustawiam jako factor.
+
+```{r sredniaGrup, echo=FALSE}
+zastapSredniaGrup  <- function(data)
+{
+  data  <- as.data.frame(data)
+  for (i in 1:ncol(data)) {
+    ktore  <- which(is.na(data[,i]))
+    if(length(ktore)>0)
+    {
+      for(j in 1:length(ktore))
+      {
+        if(data[ktore[j],ncol(data)]==0)
+        {
+          data[ktore[j],i]=mean(data[which(data$class==0),i], na.rm = T)
+        }
+        else
+        {
+          data[ktore[j],i]=mean(data[which(data$class==1),i], na.rm = T)
+        }
+      }
+    }
+    
+  }
+  return(data)
+}
+
+X1year_n  <- zastapSredniaGrup(X1year_n)
+
+
+X1year_n$class  <- as.factor(X1year_n$class)
+```
+
+## Stosunek bankrutów do niebankrutów 
+
+```{r stosunekIlosciowy, echo=FALSE}
+wykres  <-  barplot(table(X1year_n$class), col = c("darkgreen", "red"),
+        xlab="Bankructwo",
+        ylab="Ilość firm")
+text(wykres, 0, table(X1year_n$class), cex=2,pos=3) 
+```
+
+
+## Korelacja
+
+W macierzy korelacji nie widać silnej korelacji między żadną ze zmiennych, a bankructwem. Zmienne posegregowane w kolejności malejącej korelacji. 
+```{r korelacje, echo=FALSE, message=FALSE}
+library(lares)
+
+corr_var(X1year_n, # name of dataset
+         class_1, # name of variable to focus on
+         top=30
+)
+```
+
+### Korelacja między zmiennymi
+
+Widać jednak silną korelację między zmiennymi, właściwe mogłoby być zastosowanie głównych składowych w celu redukcji wymiarowości. 
+```{r korelacjezm, echo=FALSE, message=FALSE}
+korelacjaZmienne  <- cor(X1year_n[,1:(ncol(X1year_n)-1)])
+
+library(ggcorrplot)
+ggcorrplot(korelacjaZmienne, tl.cex = "8")
+```
+
+## Analiza głównych składowych
+
+Ponieważ praca z tak dużą ilością zmiennych może być trudna, przeszkadza to w wizualizacji i może zmniejszyć efektywność poprzez włączenie zmiennych, które nie mają wpływu na analizę, postanowiono przeprowadzić analizę głównych składowych
+
+```{r PCA, echo=FALSE, message=FALSE, warning=FALSE}
+library(kableExtra)
+library(FactoMineR)
+library(factoextra)
+
+X1year_pca <- PCA(X1year_n[,1:(ncol(X1year_n)-1)]) 
+
+eig.pca  <- get_eigenvalue(X1year_pca)
+
+wla.pca  <- data.frame("SklGlowna"=c(1:length(eig.pca)), 
+                       "wartWlasna"=round(eig.pca[,1], 2), 
+                       "procWarianWyj"=round(eig.pca[,2],2),
+                       "skumpProcWarWyj"=round(eig.pca[,3],2))
+row.names(wla.pca)  <- c()
+
+kable(wla.pca)
+```
+
+### Wykres osypiska
+
+Według wykresu osypiska, 5 głównych składowych byłoby optymalną liczbą, składowe te wyjaśniają 72% wariancji.
+```{r PCA2, echo=FALSE, message=FALSE, warning=FALSE}
+
+#scree plot
+fviz_eig(X1year_pca, addlabels = TRUE,choice = "eigenvalue")+xlab("numer skladowej glownej")+ylab("wartosci wlasne")+ggtitle("Wykres wartosci wlasnych")
+
+wektoryGl  <- X1year_pca$var$coord
+wektoryGl  <-  round(wektoryGl[,1:5],2)
+colnames(wektoryGl)  <- c("Skladowa 1", "Skladowa 2", "Skladowa 3", "Skladowa 4", "Skladowa 5")
+kable(wektoryGl)
+
+fviz_pca_ind(X1year_pca,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+)
+
+fviz_pca_ind(X1year_pca, axes = c(3,4),
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+)
+
+fviz_pca_var(X1year_pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+)
+
+fviz_pca_biplot(X1year_pca, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+)+xlab("Skladowa 1 (45%)")+ylab("Skladowa 2 (15%)")+ggtitle("Analiza glownych skladowych - wykres biplot")
+```
+
+Analizę zaprezentowano dla danych z pierwszego pliku, lecz dla pozostałych plików wyglądają bardzo podobnie. 
+
+## Zbiór danych nr 2
+
+Poszukiwałem drugiego zbioru danych odnośnie polskich przedsiębiorstw - bankrutów i niebankrutów, lecz nie znalazłem nic sensownego. Drugi zbiór danych jest dla przedsiębiorstw ze Słowacji, dane są podzielone na 4 lata i sektory gospodarki takie jak rolnictwo, budownictwo, przemysł, handel.
+
+Dane pobrane zostały ze strony https://data.mendeley.com/datasets/j89csb932y/2
+
+To 63 wskaźniki finansowe, informacje o bankructwie dla ponad 10 tysięcy przedsiębiorswt w każdym roku. 
+```{r daneSK, echo = FALSE, warning=FALSE, message=FALSE}
+### biblioteki
+#wczytywanie danych Słowacja
+bankrupt_agriculture_13_year_10_11_12 <- read_delim("../dane/j89csb932y-2/bankrupt_agriculture_13_year_10_11_12.csv", 
+                                                    ";", escape_double = FALSE, locale = locale(decimal_mark = ",", 
+                                                                                                grouping_mark = ""), 
+                                                    col_types = cols(X1 = col_skip()), trim_ws = TRUE)
+bankrupt_agriculture_14_year_11_12_13 <- read_delim("../dane/j89csb932y-2/bankrupt_agriculture_14_year_11_12_13.csv", 
+                                                    ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                    trim_ws = TRUE)
+bankrupt_agriculture_15_year_12_13_14 <- read_delim("../dane/j89csb932y-2/bankrupt_agriculture_15_year_12_13_14.csv", 
+                                                    ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                    trim_ws = TRUE)
+bankrupt_agriculture_16_year_13_14_15 <- read_delim("../dane/j89csb932y-2/bankrupt_agriculture_16_year_13_14_15.csv", 
+                                                    ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                    trim_ws = TRUE)
+bankrupt_construction_13_year_10_11_12 <- read_delim("../dane/j89csb932y-2/bankrupt_construction_13_year_10_11_12.csv", 
+                                                     ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                     trim_ws = TRUE)
+bankrupt_construction_14_year_11_12_13 <- read_delim("../dane/j89csb932y-2/bankrupt_construction_14_year_11_12_13.csv", 
+                                                     ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                     trim_ws = TRUE)
+bankrupt_construction_15_year_12_13_14 <- read_delim("../dane/j89csb932y-2/bankrupt_construction_15_year_12_13_14.csv", 
+                                                     ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                     trim_ws = TRUE)
+bankrupt_construction_16_year_13_14_15 <- read_delim("../dane/j89csb932y-2/bankrupt_construction_16_year_13_14_15.csv", 
+                                                     ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                     trim_ws = TRUE)
+bankrupt_manufacture_13_year_10_11_12 <- read_delim("../dane/j89csb932y-2/bankrupt_manufacture_13_year_10_11_12.csv", 
+                                                    ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                    trim_ws = TRUE)
+bankrupt_manufacture_14_year_11_12_13 <- read_delim("../dane/j89csb932y-2/bankrupt_manufacture_14_year_11_12_13.csv", 
+                                                    ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                    trim_ws = TRUE)
+bankrupt_manufacture_15_year_12_13_14 <- read_delim("../dane/j89csb932y-2/bankrupt_manufacture_15_year_12_13_14.csv", 
+                                                    ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                    trim_ws = TRUE)
+bankrupt_manufacture_16_year_13_14_15 <- read_delim("../dane/j89csb932y-2/bankrupt_manufacture_16_year_13_14_15.csv", 
+                                                    ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                                    trim_ws = TRUE)
+bankrupt_retail_13_year_10_11_12 <- read_delim("../dane/j89csb932y-2/bankrupt_retail_13_year_10_11_12.csv", 
+                                               ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                               trim_ws = TRUE)
+bankrupt_retail_14_year_11_12_13 <- read_delim("../dane/j89csb932y-2/bankrupt_retail_14_year_11_12_13.csv", 
+                                               ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                               trim_ws = TRUE)
+bankrupt_retail_15_year_12_13_14 <- read_delim("../dane/j89csb932y-2/bankrupt_retail_15_year_12_13_14.csv", 
+                                               ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                               trim_ws = TRUE)
+bankrupt_retail_16_year_13_14_15 <- read_delim("../dane/j89csb932y-2/bankrupt_retail_16_year_13_14_15.csv", 
+                                               ";", escape_double = FALSE, locale = locale(decimal_mark = ",",          grouping_mark = ""), col_types = cols(X1 = col_skip()), 
+                                               trim_ws = TRUE)
+nonbankrupt_agriculture_13_year_10_11_12 <- read_csv("../dane/j89csb932y-2/nonbankrupt_agriculture_13_year_10_11_12.csv")
+nonbankrupt_agriculture_14_year_11_12_13 <- read_csv("../dane/j89csb932y-2/nonbankrupt_agriculture_14_year_11_12_13.csv")
+nonbankrupt_agriculture_15_year_12_13_14 <- read_csv("../dane/j89csb932y-2/nonbankrupt_agriculture_15_year_12_13_14.csv")
+nonbankrupt_agriculture_16_year_13_14_15 <- read_csv("../dane/j89csb932y-2/nonbankrupt_agriculture_16_year_13_14_15.csv")
+nonbankrupt_construction_13_year_10_11_12 <- read_csv("../dane/j89csb932y-2/nonbankrupt_construction_13_year_10_11_12.csv")
+nonbankrupt_construction_14_year_11_12_13 <- read_csv("../dane/j89csb932y-2/nonbankrupt_construction_14_year_11_12_13.csv")
+nonbankrupt_construction_15_year_12_13_14 <- read_csv("../dane/j89csb932y-2/nonbankrupt_construction_15_year_12_13_14.csv")
+nonbankrupt_construction_16_year_13_14_15 <- read_csv("../dane/j89csb932y-2/nonbankrupt_construction_16_year_13_14_15.csv")
+nonbankrupt_manufacture_13_year_10_11_12 <- read_csv("../dane/j89csb932y-2/nonbankrupt_manufacture_13_year_10_11_12.csv")
+nonbankrupt_manufacture_14_year_11_12_13 <- read_csv("../dane/j89csb932y-2/nonbankrupt_manufacture_14_year_11_12_13.csv")
+nonbankrupt_manufacture_15_year_12_13_14 <- read_csv("../dane/j89csb932y-2/nonbankrupt_manufacture_15_year_12_13_14.csv")
+nonbankrupt_manufacture_16_year_13_14_15 <- read_csv("../dane/j89csb932y-2/nonbankrupt_manufacture_16_year_13_14_15.csv")
+nonbankrupt_retail_13_year_10_11_12 <- read_csv("../dane/j89csb932y-2/nonbankrupt_retail_13_year_10_11_12.csv")
+nonbankrupt_retail_14_year_11_12_13 <- read_csv("../dane/j89csb932y-2/nonbankrupt_retail_14_year_11_12_13.csv")
+nonbankrupt_retail_15_year_12_13_14 <- read_csv("../dane/j89csb932y-2/nonbankrupt_retail_15_year_12_13_14.csv")
+nonbankrupt_retail_16_year_13_14_15 <- read_csv("../dane/j89csb932y-2/nonbankrupt_retail_16_year_13_14_15.csv")
+
+dataSkBank1<-rbind(bankrupt_agriculture_13_year_10_11_12, bankrupt_construction_13_year_10_11_12, bankrupt_manufacture_13_year_10_11_12,bankrupt_retail_13_year_10_11_12)
+dataSkBank1$class  <- 1
+
+dataSkBank2  <- rbind(bankrupt_agriculture_14_year_11_12_13, bankrupt_construction_14_year_11_12_13, bankrupt_manufacture_14_year_11_12_13,bankrupt_retail_14_year_11_12_13)
+dataSkBank2$class  <- 1
+
+dataSkBank3  <- rbind(bankrupt_agriculture_15_year_12_13_14, bankrupt_construction_15_year_12_13_14, bankrupt_manufacture_15_year_12_13_14,bankrupt_retail_15_year_12_13_14)
+dataSkBank3$class  <- 1
+
+dataSkBank4  <- rbind(bankrupt_agriculture_16_year_13_14_15, bankrupt_construction_16_year_13_14_15, bankrupt_manufacture_16_year_13_14_15, bankrupt_retail_16_year_13_14_15)
+dataSkBank4$class  <- 1
+
+dataSknon1  <- rbind(nonbankrupt_agriculture_13_year_10_11_12, nonbankrupt_construction_13_year_10_11_12, nonbankrupt_manufacture_13_year_10_11_12, nonbankrupt_retail_13_year_10_11_12)
+dataSknon1$class  <- 0
+
+dataSknon2  <- rbind(nonbankrupt_agriculture_14_year_11_12_13, nonbankrupt_construction_14_year_11_12_13, nonbankrupt_manufacture_14_year_11_12_13,nonbankrupt_retail_14_year_11_12_13)
+dataSknon2$class  <- 1
+
+dataSknon3  <- rbind(nonbankrupt_agriculture_15_year_12_13_14, nonbankrupt_construction_15_year_12_13_14, nonbankrupt_manufacture_15_year_12_13_14,nonbankrupt_retail_15_year_12_13_14)
+dataSknon3$class  <- 1
+
+dataSknon4  <- rbind(nonbankrupt_agriculture_16_year_13_14_15, nonbankrupt_construction_16_year_13_14_15, nonbankrupt_manufacture_16_year_13_14_15, nonbankrupt_retail_16_year_13_14_15)
+dataSknon4$class  <- 1
+
+dataSk1  <- rbind(dataSkBank1, dataSknon1)
+
+dataSk2  <- rbind(dataSkBank2, dataSknon2)
+
+dataSk3  <- rbind(dataSkBank3, dataSknon3)
+
+dataSk4  <- rbind(dataSkBank4, dataSknon4)
+```
+
+#### Dane dla pierwszego roku
+
+W zbiorze danych występują braki dość licznie dla poszczególnych zmiennych.
+```{r summarySK, echo = FALSE, warning=FALSE}
+summary(dataSk1)
+vis_miss(dataSk1)
+```
+
+Postąpiono tak samo jak w przypadku pierwszego zbioru danych. 
+Usunięto zmienne i obserwacje z bardzo dużą ilością braków. 
+
+Teraz braków w danych jest mało, około 0,1%.
+Braki można jeszcze zastąpić średnią grupową. 
+```{r NASK, echo = FALSE, warning=FALSE}
+#usuwanie braków 
+dataSk1  <- usunNAWiersz(dataSk1)
+
+dataSk1  <- usunNAKol(dataSk1)
+
+vis_miss(dataSk1)
+```
+
+### Stosunek ilościowy
+```{r stosunekIlosciow2, echo=FALSE}
+wykres  <-  barplot(table(dataSk1$class), col = c("darkgreen", "red"),
+        xlab="Bankructwo",
+        ylab="Ilość firm")
+text(wykres, 0, table(dataSk1$class), cex=2,pos=3) 
+```
+
+### Skalowanie danych
+Dane poddano skalowaniu. Usunięto outliery poprzednio stosowaną funkcją. Braki danych zastąpiono średnią grupową. Zmienną class ustawiono jako factor. 
+```{r, echo = FALSE, warning=FALSE}
+#skalowanie
+dataSk1_sc  <- c()
+dataSk1_sc  <- scale(dataSk1)
+dataSk1_sc  <- as.data.frame(dataSk1_sc)
+dataSk1_sc$class  <- dataSk1$class
+dataSk1_sc  <- as.data.frame(dataSk1_sc)
+
+dataSk1_sc  <- outlieryKwantyl(dataSk1_sc)
+
+boxplot(dataSk1_sc)
+
+dataSk1_n  <- zastapSredniaGrup(dataSk1_sc)
+dataSk1_n$class  <- as.factor(dataSk1_sc$class)
+```
+
+#### współczynniki zmienności 
+Praktycznie każda zmienna cechuje się dużą zmiennością, wyjątkiem jest V7, V8
+
+```{r, echo=FALSE}
+wsp.zm  <- sapply(dataSk1_sc,wz)
+
+wsp.zm
+```
+
+#### Macierz korelacji
+W macierzy korelacji nie widać silnej korelacji między żadną ze zmiennych, a bankructwem. Zmienne posegregowane w kolejności malejącej korelacji. 
+```{r, echo=FALSE}
+library(lares)
+
+corr_var(dataSk1_n, # name of dataset
+         class_1, # name of variable to focus on
+         top=30
+)
+```
+
+#### Korelacja zmienne
+
+```{r, echo=FALSE}
+korelacja2  <- cor(dataSk1_n[,1:(ncol(dataSk1_n)-1)])
+corrplot(korelacja2, tl.cex=0.5)
+```
+
+Przedsiębiorstw bankrutów jest mniej niż w przypadku zbioru danych dla Polski.
+
+Z uwagi na tak małą ilość bankrutów w stosunku do "zdrowych" przedsiębiorstw zastanawiam się, czy usuwać obserwacje gdzie brakuje danych, czy w większej ilości zastąpić je średnią. 
+```{r, echo = FALSE, warning=FALSE}
+wykres  <-  barplot(table(dataSk1_n$class), col = c("darkgreen", "red"),
+        xlab="Bankructwo",
+        ylab="Ilość firm")
+
+
+text(wykres, 0, table(dataSk1_n$class), cex=2,pos=3) 
+
+```
+
+## Zbiór danych nr 3
+
+Dane te pobrano z serwisu https://www.kaggle.com/fedesoriano/company-bankruptcy-prediction
+
+Dotyczą przedsiębiorstw z lat 1999-2009 notowanych na tajwańskiej giełdzie. To ponad 95 wskaźników dla 6819 obserwacji.
+
+```{r data, echo = FALSE, warning=FALSE, message=FALSE}
+data <- read_csv("../dane/data.csv")
+data$class  <- data$`Bankrupt?`
+## 1 - bankrut
+data  <- data[,2:ncol(data)]
+```
+
+Braki danych nie występują.
+```{r, echo = FALSE, warning=FALSE}
+summary(data)
+```
+
+Skalowanie danych i usunięcie outlierów
+```{r, echo = FALSE, warning=FALSE}
+#skalowanie
+data_sc  <- c()
+data_sc  <- scale(data)
+data_sc  <- as.data.frame(data_sc)
+data_sc$class  <- data$class
+data_sc  <- as.data.frame(data_sc)
+
+boxplot(data_sc)
+```
+
+```{r, echo = FALSE, warning=FALSE}
+data_sc  <- outliery(data_sc)
+data_sc$class  <- as.factor(data_sc$class)
+data_sc  <- data_sc[,c(-94)]
+```
+
+Stosunek ilości bankrutów do niebankrutów jest podobny jak w danych dla Polski. 
+```{r, echo = FALSE, warning=FALSE}
+wykres  <-  barplot(table(data_sc[,ncol(data_sc)]), col = c("darkgreen", "red"),
+        xlab="Bankructwo",
+        ylab="Ilość firm")
+
+text(wykres, 0, table(data_sc[,ncol(data_sc)]), cex=2,pos=3) 
+
+```
+
+
+## Korelacja
+
+Zmienne posegregowane w kolejności malejącej korelacji. Wartości korelacji są znacznie wyższe niż w przypadku poprzednich danych, jednak wciąż jest to mniej niż 0.5.
+```{r korelacje2, echo=FALSE, message=FALSE}
+
+corr_var(data_sc, # name of dataset
+         class_1, # name of variable to focus on
+         top=40
+)
+```
+
+### Korelacja między zmiennymi
+
+Widać jednak silną korelację między zmiennymi, właściwe mogłoby być zastosowanie głównych składowych w celu redukcji wymiarowości. 
+```{r korelacje2zm, echo=FALSE, message=FALSE}
+
+colnames(data_sc)[1:94]  <- paste("attr", seq(1:94), sep = "")
+korelacjaZmienne  <- cor(data_sc[,1:(ncol(data_sc)-1)])
+
+
+library(ggcorrplot)
+ggcorrplot(korelacjaZmienne, tl.cex = "8")
+```
+
+

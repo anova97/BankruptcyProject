@@ -1,0 +1,5 @@
+"0",""
+"0","fviz_pca_biplot(X1year_pca, repel = TRUE,"
+"0","                col.var = ""#2E9FDF"", # Variables color"
+"0","                col.ind = ""#696969""  # Individuals color"
+"0",")+xlab(""Skladowa 1 (45%)"")+ylab(""Skladowa 2 (15%)"")+ggtitle(""Analiza glownych skladowych - wykres biplot"")"
